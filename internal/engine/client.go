@@ -42,13 +42,13 @@ type Client struct {
 	last   *Info
 }
 
+var ErrIdentity = errors.New("推理服务元数据或运行模型不一致")
+
 func New(c config.Config) *Client {
 	return &Client{c: c, client: &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext, MaxIdleConns: 256, MaxIdleConnsPerHost: 256, ResponseHeaderTimeout: c.Task}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
-func (b *Client) Info(ctx context.Context) (*Info, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+func (b *Client) readInfo() (*Info, error) {
 	f, err := os.Open(b.c.State)
 	if err != nil {
 		return nil, err
@@ -59,7 +59,17 @@ func (b *Client) Info(ctx context.Context) (*Info, error) {
 		return nil, err
 	}
 	if len(info.Identity) != 64 || info.ServedModel != "tts-"+info.Identity || info.SampleRate != 24000 || len(info.Voices) == 0 || info.Concurrency != b.c.Concurrency || (info.TaskType != "Base" && info.TaskType != "CustomVoice") {
-		return nil, errors.New("推理服务元数据或并发配置不一致")
+		return nil, ErrIdentity
+	}
+	return &info, nil
+}
+
+func (b *Client) Info(ctx context.Context) (*Info, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	info, err := b.readInfo()
+	if err != nil {
+		return nil, err
 	}
 	for _, path := range []string{"/health", "/v1/models"} {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, b.c.Backend+path, nil)
@@ -86,18 +96,29 @@ func (b *Client) Info(ctx context.Context) (*Info, error) {
 			}
 			if e != nil || !found {
 				resp.Body.Close()
-				return nil, errors.New("运行中的模型与元数据不一致")
+				return nil, ErrIdentity
 			}
 		}
 		resp.Body.Close()
 	}
 	b.mu.Lock()
-	b.last = &info
+	b.last = info
 	b.mu.Unlock()
-	return &info, nil
+	return info, nil
 }
 
-func (b *Client) CachedInfo() *Info { b.mu.Lock(); defer b.mu.Unlock(); return b.last }
+func (b *Client) CachedInfo() *Info {
+	current, err := b.readInfo()
+	if err != nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.last == nil || current.Identity != b.last.Identity {
+		return nil
+	}
+	return b.last
+}
 
 func Key(req Request, info *Info) string {
 	req.Format = ""

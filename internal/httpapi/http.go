@@ -220,6 +220,10 @@ func (g *Handler) speech(w http.ResponseWriter, r *http.Request, asSSE bool) {
 	info, err := g.b.Info(r.Context())
 	allowNew := err == nil
 	if err != nil {
+		if errors.Is(err, engine.ErrIdentity) {
+			reply(w, 503, "推理服务配置或模型身份不一致", nil)
+			return
+		}
 		info = g.b.CachedInfo()
 		if info == nil {
 			reply(w, 503, "推理服务暂不可用", nil)

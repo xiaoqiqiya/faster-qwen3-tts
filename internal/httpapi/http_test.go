@@ -145,4 +145,14 @@ func TestHTTPStreamsShareDiskAndWrapErrors(t *testing.T) {
 	if code != 503 {
 		t.Fatal("offline cache miss admitted", code)
 	}
+	info.Identity = strings.Repeat("b", 64)
+	info.ServedModel = "tts-" + info.Identity
+	data, _ = json.Marshal(info)
+	if err = os.WriteFile(cfg.State, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	code, _ = post("/v1/audio/speech", `{"input":"你好"}`)
+	if code != 503 {
+		t.Fatal("served stale audio while replacement engine was not ready", code)
+	}
 }
