@@ -1,16 +1,23 @@
 """CPU-only behavior checks for remote validation; no model or GPU needed."""
 import asyncio
+import base64
 import io
+import json
 import os
 import tempfile
 import unittest
+import wave
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import httpx
+from fastapi import HTTPException
 
 from examples.http_streaming_client import receive_frames
 from streaming_service.cache import CapacityError, GenerationError, SharedCache, request_key
 from streaming_service.common import (AUDIO, DONE, ERROR, AudioResponse, FrameDecoder, Limits,
                                       SpeechRequest, frame, resolve_request)
+from streaming_service import gateway
 
 
 class ProtocolTests(unittest.TestCase):
@@ -70,6 +77,166 @@ class LimitsTests(unittest.TestCase):
             with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
                 with self.assertRaises(ValueError):
                     Limits.from_env()
+
+
+class GatewayStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.finish = asyncio.Event()
+        self.calls = 0
+        self.failure = None
+        self.tasks = []
+        self.pcm = b"\x00\x00\xff\x7f\x00\x80\x01\x00"
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+
+        async def producer(_req, _key):
+            self.calls += 1
+            if self.failure == "before":
+                raise RuntimeError("mock failure before audio")
+            yield self.pcm[:4]
+            await self.finish.wait()
+            if self.failure == "during":
+                raise RuntimeError("mock failure during audio")
+            yield self.pcm[4:]
+
+        self.cache = SharedCache(Limits(task_seconds=5), producer, cache_dir=directory.name)
+        info = {"default_voice": "vivian", "voices": ["vivian"], "languages": ["Chinese"],
+                "supports_instruct": False, "sample_rate": 24000}
+        state_patch = patch.object(gateway.app.state, "cache", self.cache, create=True)
+        state_patch.start()
+        self.addCleanup(state_patch.stop)
+        info_state_patch = patch.object(gateway.app.state, "info", None, create=True)
+        info_state_patch.start()
+        self.addCleanup(info_state_patch.stop)
+        info_patch = patch.object(gateway, "backend_info", AsyncMock(return_value=info))
+        self.info = info_patch.start()
+        self.addCleanup(info_patch.stop)
+
+    async def asyncTearDown(self):
+        for task in self.tasks:
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+        await self.cache.close()
+
+    def start_stream(self, path):
+        incoming, outgoing = asyncio.Queue(), asyncio.Queue()
+        body = json.dumps({"input": "船舶播报"}).encode()
+        incoming.put_nowait({"type": "http.request", "body": body, "more_body": False})
+        scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+                 "http_version": "1.1", "method": "POST", "scheme": "http", "path": path,
+                 "query_string": b"", "headers": [(b"content-type", b"application/json")],
+                 "server": ("test", 80), "client": ("test", 1234)}
+        task = asyncio.create_task(gateway.app(scope, incoming.get, outgoing.put))
+        self.tasks.append(task)
+        return task, outgoing
+
+    async def next_message(self, outgoing):
+        return await asyncio.wait_for(outgoing.get(), 2)
+
+    async def collect_tail(self, task, outgoing):
+        body = bytearray()
+        while True:
+            message = await self.next_message(outgoing)
+            body.extend(message.get("body", b""))
+            if not message.get("more_body", False):
+                break
+        await task
+        return bytes(body)
+
+    def events(self, wire):
+        return [json.loads(event.removeprefix("data: "))
+                for event in wire.decode().split("\n\n") if event]
+
+    def audio(self, events):
+        pcm = bytearray()
+        for event in events:
+            self.assertEqual(event["code"], 200)
+            self.assertTrue(event["message"])
+            data = event["data"]
+            if data["type"] != "chunk":
+                continue
+            with wave.open(io.BytesIO(base64.b64decode(data["audio_b64"])), "rb") as wav:
+                self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()),
+                                 (1, 2, data["sample_rate"]))
+                pcm.extend(wav.readframes(wav.getnframes()))
+        return bytes(pcm)
+
+    async def test_sse_arrives_before_completion_and_shares_binary_generation(self):
+        sse_task, sse_messages = self.start_stream("/generate/stream")
+        pcm_task, pcm_messages = self.start_stream("/v1/audio/speech")
+        start = await self.next_message(sse_messages)
+        self.assertEqual(start["status"], 200)
+        headers = dict(start["headers"])
+        self.assertTrue(headers[b"content-type"].startswith(b"text/event-stream"))
+        self.assertEqual(headers[b"x-accel-buffering"], b"no")
+        self.assertEqual(headers[b"x-audio-protocol"], b"sse-wav-v1")
+        first = (await self.next_message(sse_messages))["body"]
+        self.assertEqual(self.audio(self.events(first)), self.pcm[:4])
+        self.assertFalse(sse_task.done())
+        self.assertFalse(next(iter(self.cache.records.values())).done)
+        await self.next_message(pcm_messages)  # HTTP response start
+        self.finish.set()
+        events = self.events(first + await self.collect_tail(sse_task, sse_messages))
+        self.assertEqual(events[-1]["data"]["type"], "done")
+        self.assertEqual(self.audio(events), self.pcm)
+        wire = await self.collect_tail(pcm_task, pcm_messages)
+        self.assertEqual(b"".join(receive_frames(io.BytesIO(wire))), self.pcm)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=gateway.app),
+                                    base_url="http://test") as client:
+            hit = await client.post("/generate/stream", json={"input": "船舶播报"})
+        self.assertEqual(self.audio(self.events(hit.content)), self.pcm)
+        self.assertEqual(self.calls, 1)
+        self.assertEqual(self.cache.active_readers, 0)
+
+    async def test_stream_failure_has_error_event_without_done_and_can_retry(self):
+        self.failure = "during"
+        task, messages = self.start_stream("/generate/stream")
+        await self.next_message(messages)
+        first = (await self.next_message(messages))["body"]
+        self.finish.set()
+        events = self.events(first + await self.collect_tail(task, messages))
+        self.assertEqual([event["data"]["type"] for event in events], ["chunk", "error"])
+        self.assertEqual(events[-1]["code"], 200)
+        self.assertEqual(self.cache.active_readers, 0)
+        self.failure = None
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=gateway.app),
+                                    base_url="http://test") as client:
+            retry = await client.post("/generate/stream", json={"input": "船舶播报"})
+        self.assertEqual(self.audio(self.events(retry.content)), self.pcm)
+        self.assertEqual(self.calls, 2)
+
+    async def test_cancelled_client_releases_reader_without_stopping_shared_task(self):
+        task, messages = self.start_stream("/generate/stream")
+        await self.next_message(messages)
+        await self.next_message(messages)
+        record = next(iter(self.cache.records.values()))
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.cache.active_readers, 0)
+        self.finish.set()
+        await record.producer
+        self.assertTrue(record.done)
+        self.assertIsNone(record.error)
+
+    async def test_pre_stream_errors_use_matching_http_and_json_codes(self):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=gateway.app),
+                                    base_url="http://test") as client:
+            for params, status in (({}, 400), ({"input": " "}, 400),
+                                   ({"input": "播报", "voice": "unknown"}, 404),
+                                   ({"input": "播报", "speed": 2}, 400)):
+                response = await client.post("/generate/stream", json=params)
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(response.json()["code"], status)
+                self.assertIn("data", response.json())
+            self.failure = "before"
+            response = await client.post("/generate/stream", json={"input": "播报"})
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json()["code"], 503)
+            self.info.side_effect = HTTPException(503, "推理服务暂不可用")
+            response = await client.post("/generate/stream", json={"input": "播报"})
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json(), {"code": 503, "message": "推理服务暂不可用", "data": None})
 
 
 class CacheTests(unittest.IsolatedAsyncioTestCase):
@@ -370,12 +537,15 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         async def receive():
             await asyncio.Event().wait()
 
-        response = AudioResponse(body(), sample_rate=24000, fmt="pcm_framed", send_seconds=0.01,
-                                 release=release)
         scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
-        with self.assertRaises(asyncio.TimeoutError):
-            await response(scope, receive, stalled_send)
-        self.assertTrue(released.is_set())
+        for fmt in ("pcm_framed", "sse"):
+            with self.subTest(fmt=fmt):
+                released.clear()
+                response = AudioResponse(body(), sample_rate=24000, fmt=fmt, send_seconds=0.01,
+                                         release=release)
+                with self.assertRaises(asyncio.TimeoutError):
+                    await response(scope, receive, stalled_send)
+                self.assertTrue(released.is_set())
 
 
 if __name__ == "__main__":

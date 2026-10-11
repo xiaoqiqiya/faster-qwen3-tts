@@ -159,13 +159,16 @@ def audio_headers(sample_rate: int, fmt: str):
     return {
         "Cache-Control": "no-store", "X-Accel-Buffering": "no",
         "X-Audio-Sample-Rate": str(sample_rate), "X-Audio-Channels": "1",
-        "X-Audio-Sample-Format": "s16le", "X-Audio-Protocol": PROTOCOL if fmt == "pcm_framed" else "raw",
+        "X-Audio-Sample-Format": "s16le",
+        "X-Audio-Protocol": {"pcm_framed": PROTOCOL, "pcm": "raw", "sse": "sse-wav-v1"}[fmt],
     }
 
 
 class AudioResponse(StreamingResponse):
     def __init__(self, content, *, sample_rate: int, fmt: str, send_seconds: float, release=None):
-        super().__init__(content, media_type="application/vnd.qwen.pcm-stream" if fmt == "pcm_framed" else "audio/pcm",
+        media_type = {"pcm_framed": "application/vnd.qwen.pcm-stream", "pcm": "audio/pcm",
+                      "sse": "text/event-stream"}[fmt]
+        super().__init__(content, media_type=media_type,
                          headers=audio_headers(sample_rate, fmt))
         self.send_seconds = send_seconds
         self.release = release

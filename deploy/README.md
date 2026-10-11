@@ -129,7 +129,7 @@ TTS_DEFAULT_VOICE=zhangsan
 }
 ```
 
-文本精确匹配，保留空格和标点，最多 2048 字符。相同有效默认值和明确参数会共享任务；不同文本、音色、语言、指令、模型版本、参考版本、采样配置不会混用。两种传输封装共享相同的 PCM 结果。
+文本精确匹配，保留空格和标点，最多 2048 字符。相同有效默认值和明确参数会共享任务；不同文本、音色、语言、指令、模型版本、参考版本、采样配置不会混用。二进制和 SSE 传输封装共享相同的 PCM 结果。
 
 使用交付的客户端边接收边保存 WAV：
 
@@ -158,6 +158,42 @@ curl --fail-with-body --no-buffer http://127.0.0.1:8000/v1/audio/speech \
 ```
 
 原始 PCM 失败时网关抛出异常，让 HTTP 流异常终止，绝不向 PCM 插入 JSON。不同代理可能改变连接终止行为；因此可靠的业务完成确认使用默认 `pcm_framed`。
+
+## 浏览器 SSE 音频接口
+
+接口：`POST /generate/stream`。请求使用 JSON，与 `/v1/audio/speech` 使用相同的 `input`、`voice`、`language`、`instruct` 和 `speed` 字段；可省略 `voice` 使用配置中的默认音色。此路径固定返回 SSE，不需要传 `response_format`。
+
+```bash
+curl --fail-with-body --no-buffer http://127.0.0.1:8000/generate/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"浙海一二三号船，请减速慢行。","language":"Chinese"}'
+```
+
+在 Apifox 中使用 POST、Body → JSON 填写同样的请求体。成功时 `Content-Type` 为 `text/event-stream; charset=utf-8`，`X-Audio-Protocol` 为 `sse-wav-v1`。响应由多个 `data: JSON` 事件组成，以空行分隔，例如：
+
+```text
+data: {"code":200,"message":"音频片段已生成","data":{"type":"chunk","sample_rate":24000,"audio_b64":"这里是完整 WAV 片段的 Base64"}}
+
+data: {"code":200,"message":"语音生成完成","data":{"type":"done"}}
+
+```
+
+每个 `chunk` 的 `audio_b64` 都是带 WAV 文件头的独立音频片段，16 位小端、单声道；`sample_rate` 以实际事件为准。收到片段即可解码、加入播放队列，不用等待整段生成完成。Base64 会增加约三分之一的音频传输量；网关仅转换输出封装，仍复用已有模型、共享任务、磁盘缓存和资源限制。
+
+浏览器通过 `fetch` 发起 POST，用 `response.body.getReader()` 持续读取、`TextDecoder` 增量解码并按空行拆分事件。网络读取可能拆开一个事件，必须保留未完成内容。读取 `event.data.type`，将 `chunk` 中的 Base64 转为 `ArrayBuffer`，交给 Web Audio 的 `decodeAudioData()`，按音频时间轴连续调度播放。播放由用户点击按钮触发；`done` 表示生成完成，播放队列排空后才算播放完成。此 POST 接口不能使用只支持 GET 的原生 `EventSource`。
+
+首块发送前的校验、依赖或生成失败，仍返回统一 JSON 错误和对应 HTTP 状态码。流开始后的失败事件如下，之后不会再发送 `done`：
+
+```text
+data: {"code":200,"message":"语音生成失败，请重试","data":{"type":"error"}}
+
+```
+
+流已经开始后 HTTP 状态为 200，事件顶层 `code` 同样保持 200；失败通过 `data.type=error` 和中文 `message` 表达。客户端必须收到 `done` 才认定生成成功，缺少完成事件的连接结束也视为失败；已经播放的部分无法撤回。
+
+这是流式网关的新增接口，采用 JSON 和统一事件响应体，与 `demo/server.py` 中同名接口的表单请求、裸事件字段不同。迁移 demo 前端时，将请求改为 JSON，并从事件的 `data` 中读取类型和音频字段；本接口不提供 demo 的模型加载、参考音频上传或性能指标字段。
+
+网页与网关同源时可直接请求 `/generate/stream`。独立前端可通过开发代理或反向代理保持同源；当前网关未启用跨域 CORS。经过 Nginx 时使用下方代理配置，同时覆盖两个音频接口。
 
 ## 二进制帧协议
 
@@ -233,7 +269,7 @@ docker compose run --rm --no-deps \
   gateway python -m unittest discover -s /checks -p test_streaming_service.py -v
 ```
 
-这些用例覆盖 100 个相同请求只调用一次 producer、第三块后的晚加入、断开隔离、滑动 TTL、活跃读取保护、LRU、容量预留、有界排队、输出和总耗时上限、失败后重试、发送超时和帧拆分，以及磁盘缓存重启恢复、续期持久化、过期/损坏/半成品清理和磁盘写入失败。它们不证明真实 GPU 性能。
+这些用例覆盖 100 个相同请求只调用一次 producer、第三块后的晚加入、断开隔离、滑动 TTL、活跃读取保护、LRU、容量预留、有界排队、输出和总耗时上限、失败后重试、发送超时和帧拆分，以及磁盘缓存重启恢复、续期持久化、过期/损坏/半成品清理和磁盘写入失败。SSE 用例还覆盖完成前收到首块、WAV 片段内容、与二进制接口共享生成及缓存、流中失败无完成事件、客户端取消释放读取者、开始前错误的状态码和统一响应体。它们不证明真实 GPU 性能。
 
 真实 GPU 验收按根目录 [计划](../qwen3-tts-streaming-plan.md) 的表格执行。后端日志记录首块、生成结束和 GPU allocated/reserved 峰值；网关记录排队、收到首块、发送首块和完成；客户端记录收到首块和完成。不同主机的单调时间不能直接相减，应分别使用本机耗时，并在需要跨机对齐时同步时钟或抓包。
 

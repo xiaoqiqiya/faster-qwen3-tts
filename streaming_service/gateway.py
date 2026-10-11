@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
+import json
 import logging
 import os
 import time
+import wave
 from contextlib import asynccontextmanager, suppress
 
 import httpx
@@ -92,11 +96,38 @@ async def health():
 
 @app.get("/")
 async def root():
-    return envelope(200, "Qwen3-TTS 流式网关", {"health": "/health", "speech": "/v1/audio/speech"})
+    return envelope(200, "Qwen3-TTS 流式网关", {
+        "health": "/health", "speech": "/v1/audio/speech", "generate_stream": "/generate/stream",
+    })
+
+
+def sse_event(kind, message, **data):
+    # The HTTP status remains 200 after streaming starts; data.type carries the outcome.
+    payload = envelope(200, message, {"type": kind, **data})
+    return ("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+
+
+def wav_base64(chunk, sample_rate):
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(chunk)
+    return base64.b64encode(output.getvalue()).decode("ascii")
 
 
 @app.post("/v1/audio/speech")
 async def speech(req: SpeechRequest, request: Request):
+    return await generate_response(req, request)
+
+
+@app.post("/generate/stream")
+async def generate_stream(req: SpeechRequest, request: Request):
+    return await generate_response(req, request, sse=True)
+
+
+async def generate_response(req: SpeechRequest, request: Request, *, sse=False):
     allow_new = True
     try:
         info = await backend_info()
@@ -146,18 +177,26 @@ async def speech(req: SpeechRequest, request: Request):
                 if first:
                     logger.info("网关发送首块 key=%s monotonic=%.6f", key, time.monotonic())
                     first = False
+                if sse:
+                    yield sse_event("chunk", "音频片段已生成", sample_rate=info["sample_rate"],
+                                    audio_b64=wav_base64(chunk, info["sample_rate"]))
+                    continue
                 if req.response_format == "pcm_framed":
                     yield HEADER.pack(AUDIO, len(chunk))
                 yield chunk
-            if req.response_format == "pcm_framed":
+            if sse:
+                yield sse_event("done", "语音生成完成")
+            elif req.response_format == "pcm_framed":
                 yield frame(DONE)
         except GenerationError as exc:
             logger.warning("客户端音频流失败 key=%s message=%s", key, exc)
-            if req.response_format == "pcm_framed":
+            if sse:
+                yield sse_event("error", str(exc))
+            elif req.response_format == "pcm_framed":
                 yield error_frame(str(exc))
             else:
                 # Raising aborts the HTTP body rather than sending a clean end of stream.
                 raise
 
-    return AudioResponse(body(), sample_rate=info["sample_rate"], fmt=req.response_format,
+    return AudioResponse(body(), sample_rate=info["sample_rate"], fmt="sse" if sse else req.response_format,
                          send_seconds=LIMITS.send_seconds, release=release)
