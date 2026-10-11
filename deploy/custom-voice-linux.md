@@ -70,7 +70,7 @@ TTS_CACHE_MAX_MB=256
 
 `TTS_MODEL` 必须使用容器内路径。`TTS_VOICES_FILE` 必须留空，从克隆部署切换过来时也要清空它，否则 CustomVoice 会拒绝启动。
 
-缓存容量填写正整数 MB，按 `1 MB = 1024 * 1024` 字节计算；上面的配置表示缓存容量 256 MB。旧的 `TTS_CACHE_MAX_BYTES` 请改为 `TTS_CACHE_MAX_MB` 并换算数值。单任务输出和等待任务数采用内部保护值，不需要配置，旧配置项可删除。
+缓存容量填写正整数 MB，按 `1 MB = 1024 * 1024` 字节计算；上面的配置表示缓存容量 256 MB。旧的 `TTS_CACHE_MAX_BYTES` 请改为 `TTS_CACHE_MAX_MB` 并换算数值。单任务输出采用内部保护值；等待任务数可通过 `TTS_MAX_PENDING_TASKS` 设置，默认 8，调大不增加 GPU 推理并发。
 
 网关音频缓存使用硬盘，`TTS_CACHE_HOST_DIR` 是宿主机目录，Compose 自动挂载到 `/cache`，实际文件在 `/data/qwen3-tts/cache/audio/`。启动前创建可写目录：
 

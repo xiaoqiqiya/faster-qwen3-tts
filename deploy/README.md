@@ -229,6 +229,7 @@ Cache-Control: no-store
 | `TTS_CACHE_HOST_DIR` | `./cache` | 宿主机缓存目录，Compose 挂载到网关 `/cache` |
 | `TTS_CACHE_DIR` | `/cache/audio`（Compose） | 网关读写 PCM 文件和完成元数据的容器内目录 |
 | `TTS_CACHE_MAX_MB` | 256 | 磁盘 PCM 缓存和活跃任务预留容量，单位 MB |
+| `TTS_MAX_PENDING_TASKS` | 8 | 一个执行任务之外最多等待的不同生成任务数，正整数；不增加 GPU 推理并发 |
 | `TTS_MAX_READERS` | 256 | 最多 256 个音频读取连接，同文本连接也计数 |
 | `TTS_TASK_TIMEOUT_SECONDS` | 120 | 网关从创建任务开始计时，包含排队；后端从生成开始硬计时 |
 | `TTS_SEND_TIMEOUT_SECONDS` | 15 | 每个网络发送操作的独立超时 |
@@ -237,9 +238,11 @@ Cache-Control: no-store
 | `TTS_MAX_NEW_TOKENS` | 1024 | 到达上限而未遇到 EOS 时报告失败，不缓存截断音频 |
 | `TTS_MAX_SEQ_LEN` | 2048 | CUDA Graph 序列缓存上限，需大于生成 token 上限 |
 
-缓存容量填写正整数，`1 MB = 1024 * 1024` 字节。已有 `.env` 请将旧的 `TTS_CACHE_MAX_BYTES` 改为 `TTS_CACHE_MAX_MB` 并换算数值，例如 `268435456` 字节改为 `256` MB。单任务输出和等待任务数不再提供配置项，可删除旧的 `TTS_MAX_OUTPUT_BYTES`、`TTS_MAX_OUTPUT_MB`、`TTS_MAX_PENDING_TASKS`；这些变量不再读取。健康接口中的字节统计仍以 bytes 返回，方便精确核对文件大小。
+缓存容量填写正整数，`1 MB = 1024 * 1024` 字节。已有 `.env` 请将旧的 `TTS_CACHE_MAX_BYTES` 改为 `TTS_CACHE_MAX_MB` 并换算数值，例如 `268435456` 字节改为 `256` MB。单任务输出不提供配置项，可删除旧的 `TTS_MAX_OUTPUT_BYTES`、`TTS_MAX_OUTPUT_MB`；这些变量不再读取。健康接口中的字节统计仍以 bytes 返回，方便精确核对文件大小。
 
-内部仍保护单任务最多 8 MB PCM（24 kHz 下约 175 秒）和一个执行任务之外最多 8 个等待任务。缓存总容量小于 8 MB 时，单任务上限自动降到缓存总容量，避免无法预留空间。相同请求共享任务，不重复占用等待名额。
+内部仍保护单任务最多 8 MB PCM（24 kHz 下约 175 秒）。`TTS_MAX_PENDING_TASKS` 默认允许一个执行任务之外最多 8 个等待任务；相同请求共享任务，不重复占用等待名额。调大等待数量只增加排队容量，GPU 仍单并发，排队时间计入 `TTS_TASK_TIMEOUT_SECONDS`。缓存总容量小于 8 MB 时，单任务上限自动降到缓存总容量，避免无法预留空间。
+
+例如 `.env` 设置 `TTS_MAX_PENDING_TASKS=16`，最多接纳一个执行任务和 16 个等待任务；网关还会按每个未完成任务最多 8 MB 预留磁盘缓存容量，因此缓存不足时可能提前拒绝新任务。修改后重新创建网关。镜像部署还需使用包含该变量的新 `compose.images.yaml`。
 
 首次准入原子创建共享 producer，并按最大输出量预留磁盘容量；完成后按实际文件大小释放多余预留。活跃生成和活跃读取的数据计入容量，不能淘汰；容量不足优先淘汰无人读取的已完成 LRU 条目，再拒绝新任务。实际磁盘空间不足或不可写时返回中文错误。这里限制的是 PCM 文件与任务预留，不包含文件系统分配和 JSON 元数据开销，也不是整个 Python 进程 RSS 上限。
 

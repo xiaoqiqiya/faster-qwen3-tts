@@ -93,6 +93,7 @@ class Limits:
     def from_env(cls):
         values = {
             "ttl": ("TTS_CACHE_TTL_SECONDS", float),
+            "pending": ("TTS_MAX_PENDING_TASKS", int),
             "readers": ("TTS_MAX_READERS", int),
             "task_seconds": ("TTS_TASK_TIMEOUT_SECONDS", float),
             "send_seconds": ("TTS_SEND_TIMEOUT_SECONDS", float),

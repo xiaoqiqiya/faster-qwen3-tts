@@ -74,11 +74,14 @@ TTS_PORT=8000
 TTS_CACHE_HOST_DIR=/data/qwen3-tts/cache
 TTS_CACHE_MAX_MB=256
 TTS_CACHE_TTL_SECONDS=300
+TTS_MAX_PENDING_TASKS=8
 ```
 
 `TTS_MODEL_HOST_DIR` 是宿主机目录，Compose 自动挂载到 `/models`；`TTS_MODEL` 是容器内模型目录。模型目录保持可写，框架缓存也使用 `/models`。无需手动修改 Compose 的挂载。
 
 音频缓存落在宿主机 `/data/qwen3-tts/cache/audio/`，容器重启后恢复未过期的完整结果。容量单位为 MB，`1 MB = 1024 * 1024` 字节；TTL 按配置计算，停机时间计入过期。达到容量时可以先淘汰无人读取的 LRU 结果，详见 [缓存规则](README.md#缓存和资源限制)。
+
+`TTS_MAX_PENDING_TASKS` 是一个执行任务之外允许排队的生成任务数，填写正整数，默认 8。调大只增加等待容量，GPU 仍同时生成一个任务；排队受缓存容量和任务总超时约束。升级后使用新 `compose.images.yaml`，修改 `.env` 并重新创建网关才会生效。
 
 如只通过服务器本机或反向代理访问，使用 `TTS_BIND_ADDRESS=127.0.0.1`。当前接口没有账户认证，对外访问由部署环境控制。
 

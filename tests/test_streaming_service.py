@@ -60,11 +60,12 @@ class LimitsTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(Limits.from_env(), Limits())
         with patch.dict(os.environ, {"TTS_CACHE_MAX_MB": "1024",
+                                     "TTS_MAX_PENDING_TASKS": "24",
                                      "TTS_CACHE_TTL_SECONDS": "3600"}, clear=True):
             limits = Limits.from_env()
             self.assertEqual(limits.cache_bytes, 1024 * 1024 * 1024)
             self.assertEqual(limits.output_bytes, 8 * 1024 * 1024)
-            self.assertEqual(limits.pending, 8)
+            self.assertEqual(limits.pending, 24)
             self.assertEqual(limits.ttl, 3600)
         with patch.dict(os.environ, {"TTS_CACHE_MAX_MB": "4"}, clear=True):
             limits = Limits.from_env()
@@ -73,7 +74,9 @@ class LimitsTests(unittest.TestCase):
 
     def test_mb_limits_reject_invalid_values(self):
         for env in ({"TTS_CACHE_MAX_MB": "0"}, {"TTS_CACHE_MAX_MB": "-1"},
-                    {"TTS_CACHE_MAX_MB": "1.5"}, {"TTS_CACHE_MAX_MB": "nan"}):
+                    {"TTS_CACHE_MAX_MB": "1.5"}, {"TTS_CACHE_MAX_MB": "nan"},
+                    {"TTS_MAX_PENDING_TASKS": "0"}, {"TTS_MAX_PENDING_TASKS": "-1"},
+                    {"TTS_MAX_PENDING_TASKS": "1.5"}):
             with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
                 with self.assertRaises(ValueError):
                     Limits.from_env()
