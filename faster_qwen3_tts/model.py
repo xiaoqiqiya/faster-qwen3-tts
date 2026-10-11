@@ -980,6 +980,8 @@ class FasterQwen3TTS:
         ref_spk_emb: Optional[np.ndarray] = None,
         ref_codes: Optional[np.ndarray] = None,
         voice_clone_prompt: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        *,
+        require_eos: bool = False,
     ) -> Generator[Tuple[np.ndarray, int, dict], None, None]:
         """
         Stream voice-cloned speech generation, yielding audio chunks.
@@ -1020,6 +1022,9 @@ class FasterQwen3TTS:
                 "请用纯正广东话朗读"). Prepended as a user turn before the TTS assistant turn.
                 Experimental for x-vector-only voice cloning; prefer `xvec_only=False`.
 
+            require_eos: Raise on token/sequence-limit truncation instead of completing
+                a partial stream. Supported by the CUDA graph streaming backend.
+
         Yields:
             Tuple of (audio_chunk_numpy, sample_rate, timing_dict)
         """
@@ -1031,6 +1036,9 @@ class FasterQwen3TTS:
         )
 
         from .streaming import fast_generate_streaming, parity_generate_streaming
+
+        if require_eos and parity_mode:
+            raise ValueError("require_eos is only supported by the CUDA graph streaming backend")
 
         non_streaming_mode = self._resolve_non_streaming_mode(
             non_streaming_mode,
@@ -1081,6 +1089,7 @@ class FasterQwen3TTS:
         if not parity_mode:
             stream_kwargs["predictor_graph"] = self.predictor_graph
             stream_kwargs["talker_graph"] = self.talker_graph
+            stream_kwargs["require_eos"] = require_eos
 
         for codec_chunk, timing in stream_fn(**stream_kwargs):
             all_codes.append(codec_chunk)
@@ -1242,6 +1251,8 @@ class FasterQwen3TTS:
         do_sample: bool = True,
         repetition_penalty: float = 1.05,
         chunk_size: int = 12,
+        *,
+        require_eos: bool = False,
     ) -> Generator[Tuple[np.ndarray, int, dict], None, None]:
         if self.model.model.tts_model_type != "custom_voice":
             raise ValueError("Loaded model does not support custom voice generation")
@@ -1292,6 +1303,7 @@ class FasterQwen3TTS:
             do_sample=do_sample,
             repetition_penalty=repetition_penalty,
             chunk_size=chunk_size,
+            require_eos=require_eos,
         ):
             all_codes.append(codec_chunk)
             n_new = codec_chunk.shape[0]

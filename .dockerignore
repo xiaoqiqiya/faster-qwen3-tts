@@ -1,0 +1,14 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.env
+references
+models
+outputs
+artifacts
+*.wav
+tests
+benchmarks
+demo
+packages

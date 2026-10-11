@@ -65,7 +65,9 @@ def test_public_api_exposes_voice_clone_prompt_parameter():
     assert list(sig_clone.parameters).index("max_new_tokens") == 5
     assert list(sig_stream.parameters).index("max_new_tokens") == 5
     assert list(sig_clone.parameters)[-1] == "voice_clone_prompt"
-    assert list(sig_stream.parameters)[-1] == "voice_clone_prompt"
+    assert list(sig_stream.parameters)[-2] == "voice_clone_prompt"
+    assert sig_stream.parameters["require_eos"].kind == inspect.Parameter.KEYWORD_ONLY
+    assert sig_stream.parameters["require_eos"].default is False
     assert sig_clone.parameters["xvec_only"].default is False
     assert sig_clone.parameters["non_streaming_mode"].default is None
     assert sig_stream.parameters["xvec_only"].default is False
@@ -111,6 +113,32 @@ def test_private_warmup_alias_uses_public_api(monkeypatch):
     model._warmup(37)
 
     assert calls == [37]
+
+
+@pytest.mark.parametrize("mode", ["clone", "custom"])
+def test_streaming_forwards_strict_completion_and_propagates_truncation(monkeypatch, mode):
+    from faster_qwen3_tts import streaming
+    model = _build_dummy_model()
+    source = types.SimpleNamespace(speech_tokenizer=object())
+    model._prepare_generation = lambda **_kwargs: (source, None, None, None, None, None, None, None)
+    model._prepare_generation_custom = lambda **_kwargs: (source, None, None, None, None, None, None)
+    captured = {}
+
+    def truncated(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("sequence limit before EOS")
+        yield  # This mock fails when the generator is advanced, as real inference does.
+
+    monkeypatch.setattr(streaming, "fast_generate_streaming", truncated)
+    kwargs = dict(text="播报", language="Chinese", require_eos=True)
+    if mode == "custom":
+        model.model.model.tts_model_type = "custom_voice"
+        iterator = model.generate_custom_voice_streaming(**kwargs, speaker="vivian")
+    else:
+        iterator = model.generate_voice_clone_streaming(**kwargs)
+    with pytest.raises(RuntimeError, match="sequence limit before EOS"):
+        next(iterator)
+    assert captured["require_eos"] is True
 
 
 def test_torch_backend_rejects_ggml_cached_reference_args():

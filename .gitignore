@@ -10,3 +10,6 @@ __pycache__/
 outputs/
 artifacts/
 packages/qwentts_cpp_python/
+.env
+references/voice.txt
+!references/voices.example.json

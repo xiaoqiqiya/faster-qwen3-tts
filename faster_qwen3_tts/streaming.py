@@ -33,6 +33,7 @@ def fast_generate_streaming(
     do_sample: bool = True,
     repetition_penalty: float = 1.05,
     chunk_size: int = 12,
+    require_eos: bool = False,
 ) -> Generator[Tuple[torch.Tensor, dict], None, None]:
     """
     Streaming autoregressive generation with CUDA-graphed predictor and talker.
@@ -130,6 +131,8 @@ def fast_generate_streaming(
         # --- CUDA-Graphed Talker decode step ---
         current_pos = prefill_len + step_idx
         if current_pos >= talker_graph.max_seq_len - 1:
+            if require_eos:
+                raise RuntimeError("Streaming generation reached the CUDA graph sequence limit before EOS")
             break
 
         hidden_states = talker_graph.run(inputs_embeds, position=current_pos)
@@ -186,6 +189,9 @@ def fast_generate_streaming(
             'total_steps_so_far': total_steps,
             'is_final': True,
         }
+
+    if require_eos and token.item() != eos_id:
+        raise RuntimeError("Streaming generation reached max_new_tokens before EOS")
 
 
 @torch.inference_mode()

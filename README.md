@@ -5,6 +5,10 @@ Torch backend uses `torch.cuda.CUDAGraph` on NVIDIA CUDA and AMD ROCm. The
 GGML backend supports CUDA, Apple Silicon Metal, and AMD with a source-built
 HIP runtime.
 
+For the Docker streaming inference service and shared-cache gateway, see the
+[deployment guide](deploy/README.md). It includes Compose, model/voice settings,
+bounded queues, sliding TTL, an explicit completion protocol, and a streaming client.
+
 ## Install
 
 Requires: Python 3.10+ and PyTorch 2.5.1+. The Torch backend requires

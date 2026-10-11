@@ -1,0 +1,10 @@
+{
+  "zhangsan": {
+    "ref_audio": "zhangsan.wav",
+    "ref_text_file": "zhangsan.txt"
+  },
+  "lisi": {
+    "ref_audio": "lisi.wav",
+    "ref_text_file": "lisi.txt"
+  }
+}
