@@ -26,7 +26,8 @@ async def lifespan(app):
                                 trust_env=False) as client:
         app.state.client = client
         app.state.info = None
-        app.state.cache = SharedCache(LIMITS, backend_audio)
+        app.state.cache = SharedCache(LIMITS, backend_audio,
+                                      cache_dir=os.getenv("TTS_CACHE_DIR", "cache/audio"))
         sweep = asyncio.create_task(app.state.cache.sweep())
         try:
             yield
@@ -85,6 +86,7 @@ async def health():
     return envelope(200, "流式网关已就绪", {
         "backend": info, "cache_entries": len(cache.records), "active_readers": cache.active_readers,
         "active_tasks": len(cache.producers), "cache_accounted_bytes": cache.accounted_bytes,
+        "cache_storage": "disk", "cache_directory": str(cache.directory),
     })
 
 
@@ -119,7 +121,7 @@ async def speech(req: SpeechRequest, request: Request):
             await cache.release(record)
 
     async def wait_first():
-        while not record.chunks and not record.done:
+        while not record.size and not record.done:
             if await request.is_disconnected():
                 raise HTTPException(400, "客户端连接已关闭")
             try:

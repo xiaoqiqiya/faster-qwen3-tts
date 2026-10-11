@@ -45,6 +45,7 @@ services:
     environment:
       WORKERS: "1"
       TTS_BACKEND_URL: http://backend:8001
+      TTS_CACHE_DIR: /cache/audio
       TTS_CACHE_TTL_SECONDS: ${TTS_CACHE_TTL_SECONDS:-300}
       TTS_CACHE_MAX_BYTES: ${TTS_CACHE_MAX_BYTES:-268435456}
       TTS_MAX_OUTPUT_BYTES: ${TTS_MAX_OUTPUT_BYTES:-8388608}
@@ -53,6 +54,8 @@ services:
       TTS_TASK_TIMEOUT_SECONDS: ${TTS_TASK_TIMEOUT_SECONDS:-120}
       TTS_SEND_TIMEOUT_SECONDS: ${TTS_SEND_TIMEOUT_SECONDS:-15}
       TTS_CACHE_CLEANUP_SECONDS: ${TTS_CACHE_CLEANUP_SECONDS:-5}
+    volumes:
+      - ${TTS_CACHE_HOST_DIR:-./cache}:/cache
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=7).close()"]
       interval: 10s

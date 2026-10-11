@@ -99,9 +99,18 @@ TTS_VOICES_FILE=/references/voices.json
 TTS_DEFAULT_VOICE=zhangsan
 TTS_BIND_ADDRESS=0.0.0.0
 TTS_PORT=8000
+TTS_CACHE_HOST_DIR=/data/qwen3-tts/cache
 ```
 
 `TTS_MODEL` 和 `TTS_VOICES_FILE` 都使用容器内路径。默认音色必须存在于配置文件；留空时使用配置文件中的第一个音色。从内置音色部署切换时，将原来的 `vivian` 改为你的音色名称。
+
+网关音频缓存写入宿主机硬盘。Compose 自动将 `TTS_CACHE_HOST_DIR` 挂载到网关 `/cache`，实际文件在 `/data/qwen3-tts/cache/audio/`。启动前创建可写目录：
+
+```bash
+mkdir -p /data/qwen3-tts/cache
+```
+
+容器重启或重新创建后，同一挂载目录中的未过期完整缓存仍可命中；默认连续 300 秒无访问就过期，停机时间也计入过期。缓存目录只供一个网关实例使用，详细规则见 [缓存和资源限制](README.md#缓存和资源限制)。
 
 `0.0.0.0` 允许远程客户端访问；仅供本机或本机反向代理访问时改成 `127.0.0.1`。当前接口没有账户认证，对外开放时由部署环境控制访问。
 
@@ -191,7 +200,7 @@ docker compose up -d --force-recreate backend gateway
 docker compose logs -f backend gateway
 ```
 
-音色配置和参考特征在启动时读取，修改文件不会自动热更新。无需重新构建镜像。重新创建网关会清空其内存缓存；后端重新计算参考内容哈希，后续合成使用新的参考版本。
+音色配置和参考特征在启动时读取，修改文件不会自动热更新。无需重新构建镜像。重新创建网关会从同一挂载目录恢复未过期的磁盘缓存；后端重新计算参考内容哈希，参考版本改变后不会命中旧版本音频，旧文件按 TTL 或容量规则清理。
 
 ## 8. 单音色简化方式
 

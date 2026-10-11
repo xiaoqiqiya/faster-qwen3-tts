@@ -1,5 +1,5 @@
 FROM python:3.12.10-slim-bookworm
-ENV PYTHONUNBUFFERED=1 WORKERS=1
+ENV PYTHONUNBUFFERED=1 WORKERS=1 TTS_CACHE_DIR=/cache/audio
 WORKDIR /app
 COPY deploy/requirements-web.txt /app/deploy/
 RUN python -m pip install --no-cache-dir pip==25.1.1 \

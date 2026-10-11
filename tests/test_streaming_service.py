@@ -1,7 +1,10 @@
 """CPU-only behavior checks for remote validation; no model or GPU needed."""
 import asyncio
 import io
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from examples.http_streaming_client import receive_frames
 from streaming_service.cache import CapacityError, GenerationError, SharedCache, request_key
@@ -50,6 +53,8 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         self.calls = 0
         self.first_three = asyncio.Event()
         self.finish = asyncio.Event()
+        self.cache_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.cache_directory.cleanup)
 
         async def producer(_req, _key):
             self.calls += 1
@@ -61,7 +66,8 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
 
         self.limits = Limits(ttl=300, cache_bytes=32, output_bytes=8, pending=2,
                              readers=256, task_seconds=2, send_seconds=0.02)
-        self.cache = SharedCache(self.limits, producer, clock=lambda: self.now)
+        self.cache = SharedCache(self.limits, producer, cache_dir=self.cache_directory.name,
+                                 clock=lambda: self.now)
         self.req = SpeechRequest(input="船舶播报")
 
     async def asyncTearDown(self):
@@ -69,7 +75,7 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
 
     async def collect(self, record):
         try:
-            return [chunk async for chunk in self.cache.read(record)]
+            return b"".join([chunk async for chunk in self.cache.read(record)])
         finally:
             await self.cache.release(record)
 
@@ -81,13 +87,15 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(records[0].done)
         late = await self.cache.acquire("same", self.req)
         reader = self.cache.read(late)
-        history = [await anext(reader) for _ in range(3)]
-        self.assertEqual(history, [b"aa", b"bb", b"cc"])
+        history = await anext(reader)
+        self.assertEqual(history, b"aabbcc")
+        self.assertEqual(records[0].path.read_bytes(), history)
+        self.assertFalse(hasattr(records[0], "chunks"))
         self.finish.set()
-        history.extend([chunk async for chunk in reader])
+        history += b"".join([chunk async for chunk in reader])
         await self.cache.release(late)
         results = await asyncio.gather(*(self.collect(record) for record in records))
-        self.assertEqual(history, [b"aa", b"bb", b"cc", b"dd"])
+        self.assertEqual(history, b"aabbccdd")
         self.assertTrue(all(result == history for result in results))
 
     async def test_disconnect_and_slow_reader_do_not_hold_producer(self):
@@ -98,7 +106,7 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         self.finish.set()
         await slow.producer
         self.assertTrue(slow.done)
-        self.assertEqual(await self.collect(slow), [b"aa", b"bb", b"cc", b"dd"])
+        self.assertEqual(await self.collect(slow), b"aabbccdd")
         self.assertEqual(self.calls, 1)
 
     async def test_backend_unavailable_only_allows_existing_cache(self):
@@ -107,7 +115,7 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         await self.collect(record)
         hit = await self.cache.acquire("same", self.req, allow_new=False)
         self.assertIs(hit, record)
-        self.assertEqual(await self.collect(hit), [b"aa", b"bb", b"cc", b"dd"])
+        self.assertEqual(await self.collect(hit), b"aabbccdd")
         with self.assertRaises(CapacityError):
             await self.cache.acquire("uncached", self.req, allow_new=False)
         self.assertEqual(self.calls, 1)
@@ -131,6 +139,7 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("same", self.cache.records)
         await self.collect(hit)
         self.assertNotIn("same", self.cache.records)
+        self.assertFalse(record.path.exists())
         retry = await self.cache.acquire("same", self.req)
         await self.collect(retry)
         self.assertEqual(self.calls, 2)
@@ -163,7 +172,9 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(retry, record)
         await self.cache.release(record)
         self.assertIs(self.cache.records["same"], retry)
-        self.assertEqual(await self.collect(retry), [b"bb"])
+        self.assertEqual(await self.collect(retry), b"bb")
+        self.assertFalse(record.path.exists())
+        self.assertTrue(retry.path.exists())
         self.assertEqual(self.cache.accounted_bytes, 2)
 
     async def test_lru_reservations_and_active_records(self):
@@ -177,6 +188,7 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         self.now = 2
         third = await self.cache.acquire("third", self.req)
         self.assertNotIn("first", self.cache.records)
+        self.assertFalse(first.path.exists())
         self.assertIn("pinned", self.cache.records)
         self.assertLessEqual(self.cache.accounted_bytes, 16)
         with self.assertRaises(CapacityError):
@@ -202,6 +214,102 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(GenerationError):
             await self.collect(record)
         self.assertEqual(self.cache.accounted_bytes, 0)
+
+    async def test_completed_audio_and_sliding_ttl_survive_restart(self):
+        self.finish.set()
+        record = await self.cache.acquire("same", self.req)
+        self.assertEqual(await self.collect(record), b"aabbccdd")
+        self.assertTrue(record.path.with_suffix(".json").exists())
+        await self.cache.close()
+        self.now = 200
+        self.cache = SharedCache(self.limits, self.cache.produce,
+                                 cache_dir=self.cache_directory.name, clock=lambda: self.now)
+        hit = await self.cache.acquire("same", self.req, allow_new=False)
+        self.assertEqual(await self.collect(hit), b"aabbccdd")
+        self.assertEqual(self.calls, 1)
+        await self.cache.close()
+        self.now = 400
+        self.cache = SharedCache(self.limits, self.cache.produce,
+                                 cache_dir=self.cache_directory.name, clock=lambda: self.now)
+        self.assertIn("same", self.cache.records)
+        self.assertEqual(self.cache.accounted_bytes, 8)
+
+    async def test_restart_discards_expired_corrupt_and_unfinished_files(self):
+        self.finish.set()
+        expired = await self.cache.acquire("expired", self.req)
+        await self.collect(expired)
+        self.now = 100
+        corrupt = await self.cache.acquire("corrupt", self.req)
+        await self.collect(corrupt)
+        await self.cache.close()
+        corrupt.path.write_bytes(b"aa")
+        directory = Path(self.cache_directory.name)
+        orphan = directory / "tts-unfinished.pcm"
+        orphan.write_bytes(b"bb")
+        temporary = directory / "tts-unfinished.tmp"
+        temporary.write_text("incomplete", encoding="utf-8")
+        self.now = 300
+        self.cache = SharedCache(self.limits, self.cache.produce,
+                                 cache_dir=directory, clock=lambda: self.now)
+        self.assertFalse(self.cache.records)
+        self.assertEqual(self.cache.accounted_bytes, 0)
+        self.assertEqual(list(directory.iterdir()), [])
+
+    async def test_disk_failures_do_not_cache_partial_audio(self):
+        with patch.object(self.cache, "_new_file", side_effect=OSError("disk full")):
+            with self.assertRaises(CapacityError):
+                await self.cache.acquire("same", self.req)
+        self.assertEqual(self.calls, 0)
+        with patch.object(self.cache, "_append", side_effect=OSError("disk full")):
+            record = await self.cache.acquire("same", self.req)
+            with self.assertRaises(GenerationError):
+                await self.collect(record)
+            await record.producer
+        self.assertNotIn("same", self.cache.records)
+        self.assertFalse(record.path.exists())
+        self.assertFalse(record.path.with_suffix(".json").exists())
+        self.assertEqual(self.cache.accounted_bytes, 0)
+
+        self.finish.set()
+        with patch.object(self.cache, "_persist", side_effect=OSError("metadata write failed")):
+            record = await self.cache.acquire("same", self.req)
+            with self.assertRaises(GenerationError):
+                await self.collect(record)
+            await record.producer
+        self.assertNotIn("same", self.cache.records)
+        self.assertFalse(record.path.exists())
+        self.assertEqual(self.cache.accounted_bytes, 0)
+
+    async def test_restart_applies_smaller_capacity_and_lru(self):
+        self.finish.set()
+        first = await self.cache.acquire("first", self.req)
+        await self.collect(first)
+        self.now = 1
+        second = await self.cache.acquire("second", self.req)
+        await self.collect(second)
+        await self.cache.close()
+        smaller = Limits(cache_bytes=8, output_bytes=8)
+        self.cache = SharedCache(smaller, self.cache.produce,
+                                 cache_dir=self.cache_directory.name, clock=lambda: self.now)
+        self.assertEqual(set(self.cache.records), {"second"})
+        self.assertEqual(self.cache.accounted_bytes, 8)
+        self.assertFalse(first.path.exists())
+        hit = await self.cache.acquire("second", self.req, allow_new=False)
+        self.assertEqual(await self.collect(hit), b"aabbccdd")
+        self.assertEqual(self.calls, 2)
+
+    async def test_cache_read_failure_detaches_record_for_retry(self):
+        self.finish.set()
+        record = await self.cache.acquire("same", self.req)
+        await self.collect(record)
+        hit = await self.cache.acquire("same", self.req)
+        hit.path.write_bytes(b"aa")
+        with self.assertRaises(GenerationError):
+            await self.collect(hit)
+        self.assertNotIn("same", self.cache.records)
+        retry = await self.cache.acquire("same", self.req)
+        self.assertEqual(await self.collect(retry), b"aabbccdd")
+        self.assertEqual(self.calls, 2)
 
     async def test_send_timeout_releases_reader_even_before_body(self):
         released = asyncio.Event()

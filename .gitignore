@@ -11,5 +11,6 @@ outputs/
 artifacts/
 packages/qwentts_cpp_python/
 .env
+cache/
 references/voice.txt
 !references/voices.example.json
