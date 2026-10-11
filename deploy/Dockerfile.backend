@@ -1,26 +1,6 @@
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
-
-ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 \
-    HF_HOME=/models/huggingface TORCHINDUCTOR_CACHE_DIR=/models/torch_inductor \
-    HF_HUB_DISABLE_TELEMETRY=1 WORKERS=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv libsndfile1 libgomp1 ffmpeg sox \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:${PATH}"
-WORKDIR /app
-COPY deploy/requirements-web.txt deploy/requirements-inference.txt /app/deploy/
-RUN python -m pip install --no-cache-dir pip==25.1.1 setuptools==80.9.0 wheel==0.45.1 \
-    && python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu128 \
-       torch==2.8.0 torchaudio==2.8.0 \
-    && python -m pip install --no-cache-dir \
-       -r deploy/requirements-web.txt -r deploy/requirements-inference.txt \
-    && python -m pip check
-COPY pyproject.toml README.md LICENSE /app/
-COPY faster_qwen3_tts /app/faster_qwen3_tts
-RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation . \
-    && python -m pip check
-COPY streaming_service /app/streaming_service
+FROM vllm/vllm-omni:v0.28.0@sha256:6f8be103eaf0055448cf7578cfd621405fd669079d4361bd58896326b2bf722a
+WORKDIR /app/tts-backend
+COPY backend/launch.py ./launch.py
+ENV PYTHONUNBUFFERED=1 HF_HOME=/models/hub
 EXPOSE 8001
-CMD ["python", "-m", "uvicorn", "streaming_service.backend:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+ENTRYPOINT ["python", "/app/tts-backend/launch.py"]

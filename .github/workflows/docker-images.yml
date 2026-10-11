@@ -2,18 +2,16 @@ name: Docker images
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/vllm-omni-backend]
     paths:
       - .github/workflows/docker-images.yml
       - .dockerignore
+      - go.mod
+      - cmd/**
+      - internal/**
+      - backend/**
       - compose*.yaml
       - deploy/Dockerfile.*
-      - deploy/requirements-*.txt
-      - faster_qwen3_tts/**
-      - streaming_service/**
-      - pyproject.toml
-      - README.md
-      - LICENSE
   workflow_dispatch:
 
 permissions:
@@ -24,22 +22,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    if: github.repository == 'xiaoqiqiya/faster-qwen3-tts'
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        service: [backend, gateway]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Check deployment configuration
+      - name: Go formatting, race tests and vet (cloud only)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src golang:1.25-bookworm sh -c '
+            test -z "$(gofmt -l cmd internal)" &&
+            go test -race -count=1 ./... &&
+            go vet ./...
+          '
+      - name: Backend preparation tests
+        run: python -m unittest discover -s backend -p 'test_*.py' -v
+      - name: Check Compose runtime parity
         run: |
           docker compose -f compose.yaml config --format json > /tmp/tts-source.json
           docker compose -f compose.images.yaml config --format json > /tmp/tts-images.json
@@ -52,10 +51,28 @@ jobs:
           for name, config in source['services'].items():
               runtime = {key: value for key, value in images['services'][name].items() if key != 'image'}
               assert runtime == {key: value for key, value in config.items() if key != 'build'}, name
+          assert source['volumes'] == images['volumes']
           PY
-      - name: Free space for CUDA image
+
+  build:
+    needs: check
+    if: github.repository == 'xiaoqiqiya/faster-qwen3-tts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [backend, gateway]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Free space for official CUDA image
         if: matrix.service == 'backend'
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -76,12 +93,10 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=tts-${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=tts-${{ matrix.service }}
 
-  publish-latest:
+  publish:
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/vllm-omni-backend'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -93,19 +108,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish latest after both builds succeed
+      - name: Publish matched image pair
         run: |
           prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tag=vllm-omni
+          if [ "$GITHUB_REF" = refs/heads/main ]; then tag=latest; fi
           for service in backend gateway; do
-            docker buildx imagetools create \
-              --tag "$prefix-$service:latest" \
-              "$prefix-$service:sha-$GITHUB_SHA"
+            docker buildx imagetools create --tag "$prefix-$service:$tag" "$prefix-$service:sha-$GITHUB_SHA"
           done
           {
-            echo 'Both images were built from the same source commit.'
-            echo '```dotenv'
-            echo "TTS_IMAGE_TAG=sha-$GITHUB_SHA"
-            echo '```'
-            echo 'Deploy: docker compose -f compose.images.yaml pull'
-            echo 'Start: docker compose -f compose.images.yaml up -d'
+            echo "Both images built and checked from $GITHUB_SHA."
+            echo "Deployment tag: TTS_IMAGE_TAG=sha-$GITHUB_SHA"
+            echo "Moving tag: $tag"
+            echo 'GPU model startup and audio quality require remote validation.'
           } >> "$GITHUB_STEP_SUMMARY"

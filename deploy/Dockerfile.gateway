@@ -1,10 +1,11 @@
-FROM python:3.12.10-slim-bookworm
-ENV PYTHONUNBUFFERED=1 WORKERS=1 TTS_CACHE_DIR=/cache/audio
-WORKDIR /app
-COPY deploy/requirements-web.txt /app/deploy/
-RUN python -m pip install --no-cache-dir pip==25.1.1 \
-    && python -m pip install --no-cache-dir -r deploy/requirements-web.txt \
-    && python -m pip check
-COPY streaming_service /app/streaming_service
+FROM golang:1.25-bookworm AS builder
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /gateway ./cmd/gateway
+
+FROM scratch
+COPY --from=builder /gateway /gateway
 EXPOSE 8000
-CMD ["python", "-m", "uvicorn", "streaming_service.gateway:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+ENTRYPOINT ["/gateway"]
