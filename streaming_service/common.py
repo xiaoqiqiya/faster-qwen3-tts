@@ -81,8 +81,8 @@ def resolve_request(req: SpeechRequest, info: dict) -> SpeechRequest:
 @dataclass(frozen=True)
 class Limits:
     ttl: float = 300
-    cache_bytes: int = 268435456
-    output_bytes: int = 8388608
+    cache_bytes: int = 256 * 1024 * 1024
+    output_bytes: int = 8 * 1024 * 1024
     pending: int = 8
     readers: int = 256
     task_seconds: float = 120
@@ -93,17 +93,19 @@ class Limits:
     def from_env(cls):
         values = {
             "ttl": ("TTS_CACHE_TTL_SECONDS", float),
-            "cache_bytes": ("TTS_CACHE_MAX_BYTES", int),
-            "output_bytes": ("TTS_MAX_OUTPUT_BYTES", int),
-            "pending": ("TTS_MAX_PENDING_TASKS", int),
             "readers": ("TTS_MAX_READERS", int),
             "task_seconds": ("TTS_TASK_TIMEOUT_SECONDS", float),
             "send_seconds": ("TTS_SEND_TIMEOUT_SECONDS", float),
             "cleanup_seconds": ("TTS_CACHE_CLEANUP_SECONDS", float),
         }
         defaults = cls()
-        result = cls(**{key: cast(os.getenv(env, str(getattr(defaults, key))))
-                        for key, (env, cast) in values.items()})
+        settings = {key: cast(os.getenv(env, str(getattr(defaults, key))))
+                    for key, (env, cast) in values.items()}
+        # Configuration uses MB (1024 * 1024 bytes); runtime accounting uses bytes.
+        mb = 1024 * 1024
+        settings["cache_bytes"] = int(os.getenv("TTS_CACHE_MAX_MB", str(defaults.cache_bytes // mb))) * mb
+        settings["output_bytes"] = min(defaults.output_bytes, settings["cache_bytes"])
+        result = cls(**settings)
         import math
         if any(not math.isfinite(v) or v <= 0 for v in result.__dict__.values()):
             raise ValueError("所有资源限制必须是有限正数")

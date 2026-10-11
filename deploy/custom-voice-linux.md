@@ -72,9 +72,12 @@ TTS_VOICES_FILE=
 TTS_BIND_ADDRESS=0.0.0.0
 TTS_PORT=8000
 TTS_CACHE_HOST_DIR=/data/qwen3-tts/cache
+TTS_CACHE_MAX_MB=256
 ```
 
 `TTS_MODEL` 必须使用容器内路径。`TTS_VOICES_FILE` 必须留空，从克隆部署切换过来时也要清空它，否则 CustomVoice 会拒绝启动。
+
+缓存容量填写正整数 MB，按 `1 MB = 1024 * 1024` 字节计算；上面的配置表示缓存容量 256 MB。旧的 `TTS_CACHE_MAX_BYTES` 请改为 `TTS_CACHE_MAX_MB` 并换算数值。单任务输出和等待任务数采用内部保护值，不需要配置，旧配置项可删除。
 
 网关音频缓存使用硬盘，`TTS_CACHE_HOST_DIR` 是宿主机目录，Compose 自动挂载到 `/cache`，实际文件在 `/data/qwen3-tts/cache/audio/`。启动前创建可写目录：
 
@@ -82,7 +85,7 @@ TTS_CACHE_HOST_DIR=/data/qwen3-tts/cache
 mkdir -p /data/qwen3-tts/cache
 ```
 
-容器重启或重新创建后，同一目录中的未过期完整缓存仍可命中；默认 TTL 为连续 300 秒无访问，停机时间也计入过期。模型和音色版本一致才复用结果。缓存目录只能由一个网关实例使用。容量、续期和清理规则见 [缓存和资源限制](README.md#缓存和资源限制)。
+容器重启或重新创建后，同一目录中的未过期完整缓存仍可命中；`TTS_CACHE_TTL_SECONDS` 决定过期时长，停机时间也计入过期。模型和音色版本一致才复用结果。缓存目录只能由一个网关实例使用。容量、续期和清理规则见 [缓存和资源限制](README.md#缓存和资源限制)。
 
 `TTS_BIND_ADDRESS=0.0.0.0` 允许远程客户端访问服务器的 `8000` 端口；仅通过本机或本机反向代理访问时使用 `127.0.0.1`。当前服务没有账户认证，对外开放时由部署环境控制访问。
 

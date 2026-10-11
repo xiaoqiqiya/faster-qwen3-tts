@@ -1,6 +1,7 @@
 """CPU-only behavior checks for remote validation; no model or GPU needed."""
 import asyncio
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,6 +46,30 @@ class ProtocolTests(unittest.TestCase):
         for updated in ({"input": "船名123。"}, {"voice": "clone"}, {"instruct": "平静"}):
             self.assertNotEqual(request_key(req, info), request_key(req.model_copy(update=updated), info))
         self.assertNotEqual(request_key(req, info), request_key(req, {**info, "model_revision": "two"}))
+
+
+class LimitsTests(unittest.TestCase):
+    def test_mb_defaults_and_conversion(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(Limits.from_env(), Limits())
+        with patch.dict(os.environ, {"TTS_CACHE_MAX_MB": "1024",
+                                     "TTS_CACHE_TTL_SECONDS": "3600"}, clear=True):
+            limits = Limits.from_env()
+            self.assertEqual(limits.cache_bytes, 1024 * 1024 * 1024)
+            self.assertEqual(limits.output_bytes, 8 * 1024 * 1024)
+            self.assertEqual(limits.pending, 8)
+            self.assertEqual(limits.ttl, 3600)
+        with patch.dict(os.environ, {"TTS_CACHE_MAX_MB": "4"}, clear=True):
+            limits = Limits.from_env()
+            self.assertEqual(limits.cache_bytes, 4 * 1024 * 1024)
+            self.assertEqual(limits.output_bytes, limits.cache_bytes)
+
+    def test_mb_limits_reject_invalid_values(self):
+        for env in ({"TTS_CACHE_MAX_MB": "0"}, {"TTS_CACHE_MAX_MB": "-1"},
+                    {"TTS_CACHE_MAX_MB": "1.5"}, {"TTS_CACHE_MAX_MB": "nan"}):
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                with self.assertRaises(ValueError):
+                    Limits.from_env()
 
 
 class CacheTests(unittest.IsolatedAsyncioTestCase):
@@ -233,6 +258,25 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
                                  cache_dir=self.cache_directory.name, clock=lambda: self.now)
         self.assertIn("same", self.cache.records)
         self.assertEqual(self.cache.accounted_bytes, 8)
+
+    async def test_restart_uses_configured_ttl_without_five_minute_gate(self):
+        self.cache.limits = Limits(ttl=3600, cache_bytes=32, output_bytes=8)
+        self.finish.set()
+        record = await self.cache.acquire("same", self.req)
+        await self.collect(record)
+        await self.cache.close()
+        self.now = 600
+        self.cache = SharedCache(self.cache.limits, self.cache.produce,
+                                 cache_dir=self.cache_directory.name, clock=lambda: self.now)
+        self.assertIn("same", self.cache.records)
+        self.assertTrue(record.path.exists())
+        self.assertEqual(self.calls, 1)
+        await self.cache.close()
+        self.now = 3600
+        self.cache = SharedCache(self.cache.limits, self.cache.produce,
+                                 cache_dir=self.cache_directory.name, clock=lambda: self.now)
+        self.assertNotIn("same", self.cache.records)
+        self.assertFalse(record.path.exists())
 
     async def test_restart_discards_expired_corrupt_and_unfinished_files(self):
         self.finish.set()

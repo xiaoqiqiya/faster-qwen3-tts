@@ -100,9 +100,12 @@ TTS_DEFAULT_VOICE=zhangsan
 TTS_BIND_ADDRESS=0.0.0.0
 TTS_PORT=8000
 TTS_CACHE_HOST_DIR=/data/qwen3-tts/cache
+TTS_CACHE_MAX_MB=256
 ```
 
 `TTS_MODEL` 和 `TTS_VOICES_FILE` 都使用容器内路径。默认音色必须存在于配置文件；留空时使用配置文件中的第一个音色。从内置音色部署切换时，将原来的 `vivian` 改为你的音色名称。
+
+缓存容量填写正整数 MB，按 `1 MB = 1024 * 1024` 字节计算；上面的配置表示缓存容量 256 MB。旧的 `TTS_CACHE_MAX_BYTES` 请改为 `TTS_CACHE_MAX_MB` 并换算数值。单任务输出和等待任务数采用内部保护值，不需要配置，旧配置项可删除。
 
 网关音频缓存写入宿主机硬盘。Compose 自动将 `TTS_CACHE_HOST_DIR` 挂载到网关 `/cache`，实际文件在 `/data/qwen3-tts/cache/audio/`。启动前创建可写目录：
 
@@ -110,7 +113,7 @@ TTS_CACHE_HOST_DIR=/data/qwen3-tts/cache
 mkdir -p /data/qwen3-tts/cache
 ```
 
-容器重启或重新创建后，同一挂载目录中的未过期完整缓存仍可命中；默认连续 300 秒无访问就过期，停机时间也计入过期。缓存目录只供一个网关实例使用，详细规则见 [缓存和资源限制](README.md#缓存和资源限制)。
+容器重启或重新创建后，同一挂载目录中的未过期完整缓存仍可命中；`TTS_CACHE_TTL_SECONDS` 决定过期时长，停机时间也计入过期。缓存目录只供一个网关实例使用，详细规则见 [缓存和资源限制](README.md#缓存和资源限制)。
 
 `0.0.0.0` 允许远程客户端访问；仅供本机或本机反向代理访问时改成 `127.0.0.1`。当前接口没有账户认证，对外开放时由部署环境控制访问。
 
