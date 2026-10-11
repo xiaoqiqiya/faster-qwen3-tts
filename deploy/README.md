@@ -2,7 +2,9 @@
 
 推理容器使用当前仓库的 `faster-qwen3-tts 0.5.4` 源码和 Torch CUDA Graph 后端；网关是独立的轻量 CPU 容器。默认只加载 `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` 一个模型。
 两端通过 Compose 内部网络传输带显式终止帧的 HTTP 流式 PCM；客户端只访问网关。推理进程重启不会清空网关缓存；本版不引入 gRPC。
-当前实现已提供语法检测，尚未构建 Docker 镜像、启动模型或执行行为测试。真实首包、音质、GPU 显存及依赖安装需要在目标服务器验证。
+本地仅做语法检测；Docker 镜像由 GitHub Actions 构建并执行依赖检查。真实首包、音质和 GPU 显存需要在目标服务器验证。
+
+直接下载 GitHub 发布的镜像、不在服务器构建时，按 [Linux 镜像部署步骤](images-linux.md) 操作，只需要 `compose.images.yaml`、`.env` 和参考文件目录。
 
 只使用内置音色、不克隆时，按 [Linux 内置音色部署步骤](custom-voice-linux.md) 操作，包含 hfd 下载、本地模型挂载、音色查询和调用示例。
 
@@ -53,17 +55,10 @@ hfd Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
 
 如果工具以 `hfd.sh` 提供，使用 `./hfd.sh` 代替 `hfd`。请下载完整仓库，保留 `config.json`、全部权重、tokenizer 配置与 `speech_tokenizer/` 等子目录。
 
-将 `compose.yaml` 中 `backend.volumes` 的模型挂载改为：
-
-```yaml
-volumes:
-  - /data/qwen3-tts/models:/models
-  - ./references:/references:ro
-```
-
-`.env` 使用容器内路径：
+在 `.env` 配置宿主机挂载目录和容器内模型路径，无需编辑 Compose：
 
 ```dotenv
+TTS_MODEL_HOST_DIR=/data/qwen3-tts/models
 TTS_MODEL=/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
 TTS_DEFAULT_VOICE=vivian
 ```
@@ -242,4 +237,4 @@ docker compose run --rm --no-deps \
 
 真实 GPU 验收按根目录 [计划](../qwen3-tts-streaming-plan.md) 的表格执行。后端日志记录首块、生成结束和 GPU allocated/reserved 峰值；网关记录排队、收到首块、发送首块和完成；客户端记录收到首块和完成。不同主机的单调时间不能直接相减，应分别使用本机耗时，并在需要跨机对齐时同步时钟或抓包。
 
-需要确认：首块到达客户端时后端仍在生成、100 个相同请求仅触发一次后端推理、晚加入完整无重复、中文船名与数字及音频块边界听感、稳定运行首包 P50/P95、空闲与峰值显存、不同文本的排队耗时，以及经过实际反向代理后的失败事件。Docker 构建和 GPU 运行尚未验收。
+需要确认：首块到达客户端时后端仍在生成、100 个相同请求仅触发一次后端推理、晚加入完整无重复、中文船名与数字及音频块边界听感、稳定运行首包 P50/P95、空闲与峰值显存、不同文本的排队耗时，以及经过实际反向代理后的失败事件。镜像是否构建成功以对应提交的 GitHub Actions 结果为准，GPU 运行尚未验收。

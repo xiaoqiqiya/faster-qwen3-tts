@@ -4,7 +4,7 @@
 
 部署仍使用两个容器：`backend` 加载一份模型并执行 GPU 推理，`gateway` 提供缓存和流式 HTTP 接口。客户端访问网关的 `8000` 端口，后端 `8001` 只在 Docker 内部网络使用。切换内置音色不需要为每个音色加载一份模型。
 
-以下命令在目标 Linux 服务器执行。先将当前项目源码放到服务器，所有 `docker compose` 命令都在项目根目录执行。
+以下是源码构建方式，命令在目标 Linux 服务器的项目根目录执行。直接拉取 GitHub 镜像请按 [镜像部署步骤](images-linux.md) 操作；音色和接口用法相同，Compose 命令需带 `-f compose.images.yaml`。
 
 ## 1. 服务器准备
 
@@ -53,19 +53,12 @@ hfd Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
 cp .env.example .env
 ```
 
-修改 `compose.yaml` 中 **`backend` 的 `volumes`**，将原来的 `model-cache:/models` 替换成宿主机模型目录：
-
-```yaml
-    volumes:
-      - /data/qwen3-tts/models:/models
-      - ./references:/references:ro
-```
-
-这里只替换模型挂载，其他 Compose 配置沿用仓库文件。`/models` 也保存框架缓存，因此保持可写；`references` 挂载可保留，内置音色模式不读取参考录音和转写。
+通过 `.env` 的 `TTS_MODEL_HOST_DIR` 配置挂载，无需修改 Compose。`/models` 也保存框架缓存，因此保持可写；内置音色模式不读取 `references` 中的参考录音和转写。
 
 修改 `.env` 中以下项目，其他参数先保留默认值：
 
 ```dotenv
+TTS_MODEL_HOST_DIR=/data/qwen3-tts/models
 TTS_MODEL=/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
 TTS_DEFAULT_VOICE=vivian
 TTS_VOICES_FILE=

@@ -20,7 +20,7 @@ services:
       TTS_TASK_TIMEOUT_SECONDS: ${TTS_TASK_TIMEOUT_SECONDS:-120}
       TTS_SEND_TIMEOUT_SECONDS: ${TTS_SEND_TIMEOUT_SECONDS:-15}
     volumes:
-      - model-cache:/models
+      - ${TTS_MODEL_HOST_DIR:-model-cache}:/models
       - ./references:/references:ro
     expose:
       - "8001"

@@ -9,6 +9,9 @@ For the Docker streaming inference service and shared-cache gateway, see the
 [deployment guide](deploy/README.md). It includes Compose, model/voice settings,
 bounded queues, sliding TTL, an explicit completion protocol, and a streaming client.
 
+To pull prebuilt backend and gateway images from GitHub Container Registry, see
+the [Linux image deployment guide](deploy/images-linux.md); no server-side build is needed.
+
 ## Install
 
 Requires: Python 3.10+ and PyTorch 2.5.1+. The Torch backend requires

@@ -6,6 +6,8 @@
 
 以下操作都在目标 Linux 服务器进行。需要 NVIDIA 驱动、NVIDIA Container Toolkit、Docker 和 Docker Compose 2.30 或更新版本。当前镜像使用 CUDA 12.8 和 PyTorch 2.8.0/cu128，GPU 和驱动需与之兼容。所有 `docker compose` 命令在服务器的项目根目录执行。
 
+本文展示源码构建方式；直接拉取 GitHub 镜像请按 [镜像部署步骤](images-linux.md) 准备部署目录，沿用本文的参考音色配置，Compose 命令带 `-f compose.images.yaml`。
+
 ## 1. 用 hfd 下载 Base 模型
 
 ```bash
@@ -75,15 +77,7 @@ cp references/voices.example.json references/voices.json
 
 ## 4. 配置挂载和环境变量
 
-修改 `compose.yaml` 中 **`backend` 的 `volumes`**，将原来的 `model-cache:/models` 替换成宿主机模型目录：
-
-```yaml
-    volumes:
-      - /data/qwen3-tts/models:/models
-      - ./references:/references:ro
-```
-
-模型目录挂载保持可写，框架缓存也写入 `/models`。`./references` 指的是项目根目录下的参考文件目录。
+通过 `.env` 的 `TTS_MODEL_HOST_DIR` 配置模型挂载，无需修改 Compose。模型目录保持可写，框架缓存也写入 `/models`。`./references` 指的是部署目录下的参考文件目录。
 
 首次部署先复制环境配置；已有 `.env` 时直接编辑：
 
@@ -94,6 +88,7 @@ cp .env.example .env
 修改这些项目，其余参数先保持默认：
 
 ```dotenv
+TTS_MODEL_HOST_DIR=/data/qwen3-tts/models
 TTS_MODEL=/models/Qwen3-TTS-12Hz-0.6B-Base
 TTS_VOICES_FILE=/references/voices.json
 TTS_DEFAULT_VOICE=zhangsan

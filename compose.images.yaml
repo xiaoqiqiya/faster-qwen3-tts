@@ -1,0 +1,61 @@
+services:
+  backend:
+    image: ${TTS_IMAGE_PREFIX:-ghcr.io/xiaoqiqiya/faster-qwen3-tts}-backend:${TTS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    gpus: all
+    environment:
+      WORKERS: "1"
+      TTS_MODEL: ${TTS_MODEL:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}
+      TTS_MODEL_REVISION: ${TTS_MODEL_REVISION:-main}
+      TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-}
+      TTS_VOICES_FILE: ${TTS_VOICES_FILE:-}
+      TTS_REF_AUDIO: /references/voice.wav
+      TTS_REF_TEXT_FILE: /references/voice.txt
+      TTS_CHUNK_SIZE: ${TTS_CHUNK_SIZE:-8}
+      TTS_MAX_NEW_TOKENS: ${TTS_MAX_NEW_TOKENS:-1024}
+      TTS_MAX_SEQ_LEN: ${TTS_MAX_SEQ_LEN:-2048}
+      TTS_CACHE_MAX_MB: ${TTS_CACHE_MAX_MB:-256}
+      TTS_TASK_TIMEOUT_SECONDS: ${TTS_TASK_TIMEOUT_SECONDS:-120}
+      TTS_SEND_TIMEOUT_SECONDS: ${TTS_SEND_TIMEOUT_SECONDS:-15}
+    volumes:
+      - ${TTS_MODEL_HOST_DIR:-model-cache}:/models
+      - ./references:/references:ro
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30m
+    stop_grace_period: 130s
+
+  gateway:
+    image: ${TTS_IMAGE_PREFIX:-ghcr.io/xiaoqiqiya/faster-qwen3-tts}-gateway:${TTS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${TTS_BIND_ADDRESS:-127.0.0.1}:${TTS_PORT:-8000}:8000"
+    environment:
+      WORKERS: "1"
+      TTS_BACKEND_URL: http://backend:8001
+      TTS_CACHE_DIR: /cache/audio
+      TTS_CACHE_TTL_SECONDS: ${TTS_CACHE_TTL_SECONDS:-300}
+      TTS_CACHE_MAX_MB: ${TTS_CACHE_MAX_MB:-256}
+      TTS_MAX_READERS: ${TTS_MAX_READERS:-256}
+      TTS_TASK_TIMEOUT_SECONDS: ${TTS_TASK_TIMEOUT_SECONDS:-120}
+      TTS_SEND_TIMEOUT_SECONDS: ${TTS_SEND_TIMEOUT_SECONDS:-15}
+      TTS_CACHE_CLEANUP_SECONDS: ${TTS_CACHE_CLEANUP_SECONDS:-5}
+    volumes:
+      - ${TTS_CACHE_HOST_DIR:-./cache}:/cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=7).close()"]
+      interval: 10s
+      timeout: 8s
+      retries: 3
+    stop_grace_period: 10s
+
+volumes:
+  model-cache:
