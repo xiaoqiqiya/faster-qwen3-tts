@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,6 +30,7 @@ func TestRequestLogging(t *testing.T) {
 	log.SetOutput(&output)
 	defer log.SetOutput(previous)
 	g := New(config.Config{}, nil, nil)
+	seen := map[string]bool{}
 	for _, tc := range []struct {
 		method string
 		path   string
@@ -43,18 +45,32 @@ func TestRequestLogging(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(tc.method, tc.path+"?token=secret", strings.NewReader(`{}`))
 		g.ServeHTTP(w, r)
-		for _, want := range []string{"请求开始", "请求结束", "method=" + tc.method, fmt.Sprintf("path=%q", tc.path), fmt.Sprintf("status=%d bytes=%d", tc.status, w.Body.Len()), "duration="} {
+		for _, want := range []string{"请求开始", "请求结束", "method=" + tc.method, fmt.Sprintf("path=%q", tc.path), fmt.Sprintf("status=%d", tc.status), "duration="} {
 			if !strings.Contains(output.String(), want) {
 				t.Fatalf("missing %q in log: %s", want, output.String())
 			}
 		}
-		if w.Code != tc.status || strings.Contains(output.String(), "secret") {
+		ids := regexp.MustCompile(`trackid=([A-Z2-7]+)`).FindAllStringSubmatch(output.String(), -1)
+		if len(ids) < 2 || seen[ids[0][1]] {
+			t.Fatalf("missing or reused trackid: %s", output.String())
+		}
+		for _, id := range ids {
+			if id[1] != ids[0][1] {
+				t.Fatalf("trackid changed during request: %s", output.String())
+			}
+		}
+		seen[ids[0][1]] = true
+		if w.Code != tc.status || strings.Contains(output.String(), "secret") || strings.Contains(output.String(), "bytes=") {
 			t.Fatalf("response status or log privacy: %d %s", w.Code, output.String())
 		}
 	}
 }
 
 func TestHTTPStreamsShareDiskAndWrapErrors(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previous)
 	var calls atomic.Int32
 	info := engine.Info{Identity: strings.Repeat("a", 64), TaskType: "CustomVoice", Voices: []string{"vivian"}, DefaultVoice: "vivian", Languages: []string{"Chinese"}, SampleRate: 24000, MaxTokens: 1024, Concurrency: 2}
 	info.ServedModel = "tts-" + info.Identity
@@ -186,5 +202,9 @@ func TestHTTPStreamsShareDiskAndWrapErrors(t *testing.T) {
 	code, _ = post("/v1/audio/speech", `{"input":"你好"}`)
 	if code != 503 {
 		t.Fatal("served stale audio while replacement engine was not ready", code)
+	}
+	server.Close()
+	if !strings.Contains(logs.String(), `params={"input":"你好","voice":"","language":"Chinese","instruct":"","speed":1,"response_format":"pcm_framed"}`) {
+		t.Fatalf("missing request parameters: %s", logs.String())
 	}
 }

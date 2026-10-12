@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -137,7 +138,6 @@ type Handler struct {
 type responseLog struct {
 	http.ResponseWriter
 	status int
-	bytes  int64
 }
 
 func (w *responseLog) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -153,21 +153,20 @@ func (w *responseLog) Write(body []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
-	n, err := w.ResponseWriter.Write(body)
-	w.bytes += int64(n)
-	return n, err
+	return w.ResponseWriter.Write(body)
 }
 
 func (g *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
+	trackID := rand.Text()
 	logged := &responseLog{ResponseWriter: w}
-	log.Printf("请求开始 method=%s path=%q remote=%q", r.Method, r.URL.Path, r.RemoteAddr)
+	log.Printf("请求开始 trackid=%s method=%s path=%q remote=%q", trackID, r.Method, r.URL.Path, r.RemoteAddr)
 	defer func() {
 		status := logged.status
 		if status == 0 {
 			status = http.StatusOK
 		}
-		log.Printf("请求结束 method=%s path=%q remote=%q status=%d bytes=%d duration=%s canceled=%t", r.Method, r.URL.Path, r.RemoteAddr, status, logged.bytes, time.Since(started), r.Context().Err() != nil)
+		log.Printf("请求结束 trackid=%s method=%s path=%q remote=%q status=%d duration=%s canceled=%t", trackID, r.Method, r.URL.Path, r.RemoteAddr, status, time.Since(started), r.Context().Err() != nil)
 	}()
 	w = logged
 	path := r.URL.Path
@@ -190,7 +189,7 @@ func (g *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if method == "POST" {
-		g.speech(w, r, path == "/v1/audio/speech/sse")
+		g.speech(w, r, path == "/v1/audio/speech/sse", trackID)
 		return
 	}
 	info, err := g.b.Info(r.Context())
@@ -247,12 +246,15 @@ func sse(kind, message string, pcm []byte) []byte {
 	return append(append([]byte("data: "), body...), '\n', '\n')
 }
 
-func (g *Handler) speech(w http.ResponseWriter, r *http.Request, asSSE bool) {
+func (g *Handler) speech(w http.ResponseWriter, r *http.Request, asSSE bool, trackID string) {
 	req, err := decodeRequest(w, r)
 	if err != nil {
+		log.Printf("请求参数校验失败 trackid=%s detail=%q", trackID, err.Error())
 		reply(w, 400, "请求参数校验失败", map[string]string{"detail": err.Error()})
 		return
 	}
+	params, _ := json.Marshal(req)
+	log.Printf("请求参数 trackid=%s params=%s", trackID, params)
 	info, err := g.b.Info(r.Context())
 	allowNew := err == nil
 	if err != nil {
