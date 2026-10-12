@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -133,7 +134,42 @@ type Handler struct {
 	cache *cache.Store
 }
 
+type responseLog struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (w *responseLog) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *responseLog) WriteHeader(code int) {
+	if w.status == 0 && code >= 200 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *responseLog) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(body)
+	w.bytes += int64(n)
+	return n, err
+}
+
 func (g *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	logged := &responseLog{ResponseWriter: w}
+	log.Printf("请求开始 method=%s path=%q remote=%q", r.Method, r.URL.Path, r.RemoteAddr)
+	defer func() {
+		status := logged.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		log.Printf("请求结束 method=%s path=%q remote=%q status=%d bytes=%d duration=%s canceled=%t", r.Method, r.URL.Path, r.RemoteAddr, status, logged.bytes, time.Since(started), r.Context().Err() != nil)
+	}()
+	w = logged
 	path := r.URL.Path
 	method := "GET"
 	switch path {

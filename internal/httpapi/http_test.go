@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,37 @@ import (
 	"tts/internal/config"
 	"tts/internal/engine"
 )
+
+func TestRequestLogging(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previous)
+	g := New(config.Config{}, nil, nil)
+	for _, tc := range []struct {
+		method string
+		path   string
+		status int
+	}{
+		{"GET", "/", 200},
+		{"GET", "/missing", 404},
+		{"GET", "/v1/audio/speech", 405},
+		{"POST", "/v1/audio/speech", 400},
+	} {
+		output.Reset()
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(tc.method, tc.path+"?token=secret", strings.NewReader(`{}`))
+		g.ServeHTTP(w, r)
+		for _, want := range []string{"请求开始", "请求结束", "method=" + tc.method, fmt.Sprintf("path=%q", tc.path), fmt.Sprintf("status=%d bytes=%d", tc.status, w.Body.Len()), "duration="} {
+			if !strings.Contains(output.String(), want) {
+				t.Fatalf("missing %q in log: %s", want, output.String())
+			}
+		}
+		if w.Code != tc.status || strings.Contains(output.String(), "secret") {
+			t.Fatalf("response status or log privacy: %d %s", w.Code, output.String())
+		}
+	}
+}
 
 func TestHTTPStreamsShareDiskAndWrapErrors(t *testing.T) {
 	var calls atomic.Int32
