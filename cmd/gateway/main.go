@@ -1,10 +1,10 @@
 package main
 
 import (
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/cache"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/config"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/engine"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/httpapi"
+	"tts/internal/cache"
+	"tts/internal/config"
+	"tts/internal/engine"
+	"tts/internal/httpapi"
 
 	"context"
 	"errors"

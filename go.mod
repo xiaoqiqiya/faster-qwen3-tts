@@ -1,3 +1,3 @@
-module github.com/xiaoqiqiya/faster-qwen3-tts
+module tts
 
 go 1.24.0

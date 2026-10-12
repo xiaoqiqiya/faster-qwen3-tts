@@ -40,6 +40,7 @@ jobs:
         run: python -m unittest discover -s backend -p 'test_*.py' -v
       - name: Check Compose runtime parity
         run: |
+          export TTS_IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY,,}"
           docker compose -f compose.yaml config --format json > /tmp/tts-source.json
           docker compose -f compose.images.yaml config --format json > /tmp/tts-images.json
           python - <<'PY'
@@ -56,7 +57,6 @@ jobs:
 
   build:
     needs: check
-    if: github.repository == 'xiaoqiqiya/faster-qwen3-tts'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -70,9 +70,6 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Free space for official CUDA image
-        if: matrix.service == 'backend'
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -81,15 +78,35 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Image name
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.service }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.service }}" >> "$GITHUB_OUTPUT"
+          echo "backend_tag=inputs-${{ hashFiles('backend/**', 'deploy/Dockerfile.backend', '.dockerignore') }}" >> "$GITHUB_OUTPUT"
+      - name: Reuse unchanged backend
+        id: reuse
+        if: matrix.service == 'backend'
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          BACKEND_TAG: ${{ steps.image.outputs.backend_tag }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE_NAME:$BACKEND_TAG" > /dev/null 2>&1; then
+            docker buildx imagetools create --prefer-index=false --tag "$IMAGE_NAME:sha-$GITHUB_SHA" "$IMAGE_NAME:$BACKEND_TAG"
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+            echo "Backend inputs unchanged; reused $IMAGE_NAME:$BACKEND_TAG." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Free space for official CUDA image
+        if: matrix.service == 'backend' && steps.reuse.outputs.reused != 'true'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
       - name: Build and publish commit image
+        if: steps.reuse.outputs.reused != 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: deploy/Dockerfile.${{ matrix.service }}
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          tags: |
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ matrix.service == 'backend' && format('{0}:{1}', steps.image.outputs.name, steps.image.outputs.backend_tag) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -117,7 +134,7 @@ jobs:
             docker buildx imagetools create --tag "$prefix-$service:$tag" "$prefix-$service:sha-$GITHUB_SHA"
           done
           {
-            echo "Both images built and checked from $GITHUB_SHA."
+            echo "Both images ready for $GITHUB_SHA; unchanged backend images may be reused."
             echo "Deployment tag: TTS_IMAGE_TAG=sha-$GITHUB_SHA"
             echo "Moving tag: $tag"
             echo 'GPU model startup and audio quality require remote validation.'

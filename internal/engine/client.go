@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/config"
 	"io"
 	"mime"
 	"net"
@@ -19,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"tts/internal/config"
 )
 
 type Info struct {

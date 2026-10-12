@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/cache"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/config"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/engine"
+	"tts/internal/cache"
+	"tts/internal/config"
+	"tts/internal/engine"
 )
 
 func TestHTTPStreamsShareDiskAndWrapErrors(t *testing.T) {
@@ -83,7 +83,7 @@ func TestHTTPStreamsShareDiskAndWrapErrors(t *testing.T) {
 	if code != 200 || !bytes.Equal(body, []byte{1, 2, 3, 4}) {
 		t.Fatalf("PCM: %d %v", code, body)
 	}
-	code, body = post("/generate/stream", `{"input":"你好"}`)
+	code, body = post("/v1/audio/speech/sse", `{"input":"你好"}`)
 	if code != 200 || !bytes.Contains(body, []byte(`"type":"done"`)) {
 		t.Fatalf("SSE: %d %s", code, body)
 	}

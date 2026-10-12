@@ -6,14 +6,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/cache"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/config"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/engine"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+	"tts/internal/cache"
+	"tts/internal/config"
+	"tts/internal/engine"
 	"unicode/utf8"
 )
 
@@ -138,7 +138,7 @@ func (g *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method := "GET"
 	switch path {
 	case "/", "/health", "/v1/audio/voices":
-	case "/v1/audio/speech", "/generate/stream":
+	case "/v1/audio/speech", "/v1/audio/speech/sse":
 		method = "POST"
 	default:
 		reply(w, 404, "资源不存在", nil)
@@ -150,11 +150,11 @@ func (g *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "/" {
-		reply(w, 200, "Qwen3-TTS 流式网关", map[string]string{"health": "/health", "voices": "/v1/audio/voices", "speech": "/v1/audio/speech", "generate_stream": "/generate/stream"})
+		reply(w, 200, "Qwen3-TTS 流式网关", map[string]string{"health": "/health", "voices": "/v1/audio/voices", "speech": "/v1/audio/speech", "speech_sse": "/v1/audio/speech/sse"})
 		return
 	}
 	if method == "POST" {
-		g.speech(w, r, path == "/generate/stream")
+		g.speech(w, r, path == "/v1/audio/speech/sse")
 		return
 	}
 	info, err := g.b.Info(r.Context())

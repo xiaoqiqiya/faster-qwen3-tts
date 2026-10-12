@@ -71,10 +71,10 @@ TTS_VOICES_FILE=/references/voices.json
 调用不同音色使用不同的 `voice`，不是全部写 clone：
 
 ```bash
-curl -N http://127.0.0.1:8000/generate/stream \
+curl -N http://127.0.0.1:8000/v1/audio/speech/sse \
   -H 'Content-Type: application/json' \
   -d '{"input":"前方船舶请注意。","voice":"zhangsan"}'
-curl -N http://127.0.0.1:8000/generate/stream \
+curl -N http://127.0.0.1:8000/v1/audio/speech/sse \
   -H 'Content-Type: application/json' \
   -d '{"input":"请减速慢行。","voice":"lisi"}'
 ```

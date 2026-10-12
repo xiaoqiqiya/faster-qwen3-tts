@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/config"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/engine"
 	"io"
 	"log"
 	"os"
@@ -14,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"tts/internal/config"
+	"tts/internal/engine"
 )
 
 type diskMeta struct {

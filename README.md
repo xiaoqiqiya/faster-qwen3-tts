@@ -23,16 +23,17 @@ compose.images.yaml    拉取已发布镜像部署
 .env.example           部署配置模板
 ```
 
-Go 测试与实现放在同一包中；Go 部分只使用标准库。backend 中的 Python 只负责加载配置、预计算音色并启动官方引擎，没有另写一套推理服务。
+Go 测试与实现放在同一包中；Go 部分只使用标准库，模块名为 `tts`，不依赖 Git 托管地址或本地目录名。backend 中的 Python 只负责加载配置、预计算音色并启动官方引擎，没有另写一套推理服务。
 
 ## 快速部署
 
 准备 NVIDIA 驱动、NVIDIA Container Toolkit、Docker Engine 和支持 `gpus: all` 的 Docker Compose v2.30+。GPU/驱动需要兼容固定的官方 vLLM-Omni 镜像；请按 [部署文档](docs/deployment.md) 做启动检查。
 
 ```bash
-git clone -b feat/vllm-omni-backend https://github.com/xiaoqiqiya/faster-qwen3-tts.git
-cd faster-qwen3-tts
+git clone -b feat/vllm-omni-backend <你的仓库地址> qwen3-tts
+cd qwen3-tts
 cp .env.example .env
+# 编辑 .env，将 TTS_IMAGE_PREFIX 填为实际镜像前缀，例如 ghcr.io/owner/repo（全部小写）。
 mkdir -p cache references /data/qwen3-tts/models
 # 把完整模型下载到 /data/qwen3-tts/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
 docker compose -f compose.images.yaml pull
@@ -58,8 +59,12 @@ python examples/http_streaming_client.py --url http://127.0.0.1:8000 \
 
 ## 验证与发布
 
-本机仅做 Go 格式/语法解析和 Python AST 语法检查。GitHub Actions 在 Linux 上执行 Go race tests、vet、后端准备逻辑测试、Compose 一致性检查，再构建并发布两个镜像。
+本机仅做 Go 格式/语法解析和 Python AST 语法检查。GitHub Actions 在 Linux 上执行 Go race tests、vet、后端准备逻辑测试、Compose 一致性检查，再构建或复用镜像并发布。
 
-迁移分支发布 `vllm-omni` 标签；`main` 发布 `latest`。两个镜像都通过构建后才移动标签。部署固定版本时把 `TTS_IMAGE_TAG` 改为 `sha-完整提交SHA`。
+CI 自动按当前 GitHub 仓库发布 `ghcr.io/<owner>/<repo>-backend` 和 `ghcr.io/<owner>/<repo>-gateway`（全部小写）。Fork 或仓库改名无需修改源码；部署时将 `.env` 中的 `TTS_IMAGE_PREFIX` 设置为对应的 `ghcr.io/<owner>/<repo>`，不含服务后缀或标签。源码构建不需要此配置。
+
+后端镜像按 `backend/`、`deploy/Dockerfile.backend` 和 `.dockerignore` 的内容生成 `inputs-哈希` 标签。当前镜像仓库已有相同内容的镜像时，跳过后端构建，只补上本次提交的 SHA 标签；首次运行、内容变化或对应镜像不存在时才构建。只修改网关、Compose 或工作流不会重复构建已有的后端镜像。网关继续正常构建。
+
+迁移分支发布 `vllm-omni` 标签；`main` 发布 `latest`。两个镜像都准备成功后才移动标签。部署固定版本时把 `TTS_IMAGE_TAG` 改为 `sha-完整提交SHA`；复用的后端也会有同一个 SHA 标签，其镜像内 revision 标签保留实际构建时的提交。
 
 CPU CI 不验证 GPU 显存、模型启动、音色效果或实时性。这些需要在远端实际 GPU 上验收。

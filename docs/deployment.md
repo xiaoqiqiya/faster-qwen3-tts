@@ -42,15 +42,19 @@ bash hfd.sh Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
 TTS_MODEL_HOST_DIR=/data/qwen3-tts/models
 TTS_MODEL=/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
 TTS_DEFAULT_VOICE=vivian
+TTS_IMAGE_PREFIX=ghcr.io/owner/repo
 TTS_IMAGE_TAG=vllm-omni
 ```
 
 本地模型加载按实际文件内容生成身份；`TTS_MODEL_REVISION` 只用于填写 Hugging Face 仓库 ID 时的下载。模型每次启动会被流式计算内容哈希，大模型会增加启动时间。请在停服务时更新模型，避免运行中覆盖权重。
 
+`TTS_IMAGE_PREFIX` 必须替换为实际镜像前缀，不含 `-backend`、`-gateway` 或标签。例如仓库为 `myteam/voice-service`，填写 `ghcr.io/myteam/voice-service`。CI 从当前 GitHub 仓库自动生成这个前缀并转为小写；仓库改名后，等待新仓库镜像发布完成，再修改部署配置即可。镜像部署未填写此前缀时会直接报错；源码构建无需填写。
+
 ## 启动、更新和日志
 
 ```bash
 cp .env.example .env                  # 仅首次，从源码目录准备配置时执行
+# 编辑 .env，按上文填写 TTS_IMAGE_PREFIX 和模型配置。
 mkdir -p references cache
 docker compose -f compose.images.yaml pull
 docker compose -f compose.images.yaml up -d

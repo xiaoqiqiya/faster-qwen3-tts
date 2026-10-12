@@ -1,6 +1,6 @@
 services:
   backend:
-    image: ${TTS_IMAGE_PREFIX:-ghcr.io/xiaoqiqiya/faster-qwen3-tts}-backend:${TTS_IMAGE_TAG:-vllm-omni}
+    image: ${TTS_IMAGE_PREFIX:?请在 .env 中设置 TTS_IMAGE_PREFIX 为实际镜像仓库前缀}-backend:${TTS_IMAGE_TAG:-vllm-omni}
     restart: unless-stopped
     gpus: all
     shm_size: 8gb
@@ -26,7 +26,7 @@ services:
     stop_grace_period: 30s
 
   gateway:
-    image: ${TTS_IMAGE_PREFIX:-ghcr.io/xiaoqiqiya/faster-qwen3-tts}-gateway:${TTS_IMAGE_TAG:-vllm-omni}
+    image: ${TTS_IMAGE_PREFIX:?请在 .env 中设置 TTS_IMAGE_PREFIX 为实际镜像仓库前缀}-gateway:${TTS_IMAGE_TAG:-vllm-omni}
     restart: unless-stopped
     depends_on:
       backend:

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/config"
-	"github.com/xiaoqiqiya/faster-qwen3-tts/internal/engine"
+	"tts/internal/config"
+	"tts/internal/engine"
 )
 
 func settings(t *testing.T) config.Config {

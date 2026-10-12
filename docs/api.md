@@ -18,7 +18,7 @@ code 与 HTTP 状态码一致，message 为中文。列表返回顶层 rows，�
 
 ## 合成请求
 
-`POST /v1/audio/speech` 和 `POST /generate/stream` 使用相同请求字段：
+`POST /v1/audio/speech` 和 `POST /v1/audio/speech/sse` 使用相同请求字段：
 
 ```json
 {
@@ -38,7 +38,7 @@ code 与 HTTP 状态码一致，message 为中文。列表返回顶层 rows，�
 | language | 默认 Chinese，忽略大小写；可查询 health 中的 languages |
 | instruct | 默认空，最多 512 字符；仅 1.7B CustomVoice 接受非空值 |
 | speed | 当前只支持 1.0 |
-| response_format | pcm_framed（默认）或 pcm；generate/stream 始终输出 SSE |
+| response_format | pcm_framed（默认）或 pcm；`/v1/audio/speech/sse` 始终输出 SSE |
 
 未知字段、重复 JSON 字段、非法类型和超过 32 KiB 的请求体被拒绝。使用 `voice` 字段，不是 `viose`。
 
@@ -71,7 +71,7 @@ X-Audio-Sample-Format: s16le
 
 ## SSE 分块 WAV
 
-`POST /generate/stream` 返回 `text/event-stream`：
+`POST /v1/audio/speech/sse` 返回 `text/event-stream`：
 
 ```text
 data: {"code":200,"message":"音频片段已生成","data":{"type":"chunk","sample_rate":24000,"audio_b64":"BASE64_WAV"}}
